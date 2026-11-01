@@ -1,0 +1,41 @@
+# ---- Large data / third-party ----
+/data/
+/external/
+
+# ---- Models & weights ----
+/models/
+*.onnx
+*.engine
+*.trt
+*.plan
+*.pt
+*.pth
+*.ckpt
+*.cache
+
+# ---- Experiment outputs / logs ----
+/outputs/
+/runs/
+/mlflow/
+/temp/
+*.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Claude Code (local only) ----
+.claude/settings.local.json
