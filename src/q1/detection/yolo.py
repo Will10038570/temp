@@ -1,8 +1,8 @@
 """ultralytics YOLO 2D 偵測，逐張推論並記錄耗時。第一張當 warmup，不計入統計。
 
-只輸出目標類別（q1/data/classes.py）：推論時用 classes= 只保留 COCO_TO_TARGET 內的類別，
-再把 bus、truck 歸為 car。歸類後同一台車可能同時被判成 car 與 truck，
-因此對歸類後的類別再做一次 NMS，把重複框合併。
+只輸出目標類別（q1/data/classes.py）：推論時用 classes= 只保留 COCO_TO_TARGET 內的類別
+（person、bicycle、car，其他 COCO 類別一律不輸出），再依 class_map 換成目標類別名稱。
+若 class_map 把多個 COCO 類別對到同一目標類別，歸類後的 NMS 會把重複框合併；目前是一對一，這一步不會刪框。
 """
 import csv
 import time

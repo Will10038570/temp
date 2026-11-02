@@ -43,8 +43,7 @@ def draw_frame(seq, frame, calib, args):
         for pt in pts:
             cv2.circle(img, tuple(pt), 4, color, -1, cv2.LINE_AA)
         # 標籤放在最上方的角點旁，並裁到影像內
-        merged = f"/{box['codaClass']}" if cls == "car" and box["codaClass"] != "Car" else ""  # 被歸成 car 的車種
-        label = f"{cls}{merged} [{occl}]"
+        label = f"{cls} [{occl}]"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         lx, ly = pts[pts[:, 1].argmin()]
         lx = int(np.clip(lx, 0, img.shape[1] - tw - 4))

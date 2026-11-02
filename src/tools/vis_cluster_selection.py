@@ -106,10 +106,10 @@ def main():
         w.writerows(rows)
     si, ii = RESULT_FIELDS.index("status"), RESULT_FIELDS.index("iou")
     st = Counter(r[si] for r in rows)
-    ious = np.array([r[ii] for r in rows if r[si] == "ok"], dtype=float)
+    ious = np.array([r[ii] for r in rows if r[si] == "valid"], dtype=float)
     print(f"\n{len(rows)} 個偵測框：" + "、".join(f"{k} {v}" for k, v in sorted(st.items())))
     if len(ious):
-        print(f"ok 的 IoU：median {np.median(ious):.2f}，< 0.3 的有 {(ious < 0.3).sum()} 個")
+        print(f"valid 的 IoU：median {np.median(ious):.2f}，< 0.3 的有 {(ious < 0.3).sum()} 個")
     print(f"-> {args.outdir}（clusters.csv）")
 
 

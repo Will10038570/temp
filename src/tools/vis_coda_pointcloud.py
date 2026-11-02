@@ -44,7 +44,7 @@ def make_cloud(points, max_range, min_range):
 
 def make_boxes(boxes, classes):
     geoms = []
-    for box in gt_boxes(boxes):  # CODa 類別歸類成 person / bicycle / car，其餘丟掉
+    for box in boxes:  # 已經過 gt_boxes 歸類（classId 為 person / bicycle / car）
         if classes and box["classId"] not in classes:
             continue
         ls = o3d.geometry.LineSet(o3d.utility.Vector3dVector(bbox_corners(box)),

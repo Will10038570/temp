@@ -2,7 +2,7 @@
 
 保留條件（全部符合才保留）：
   1. RGB 影像（2d_rect/cam0）、LiDAR 點雲（3d_comp/os1）、3D bbox 標註（3d_bbox/os1）三者都存在
-  2. bbox 標註中至少有一個物件屬於 --classes（預設 KEEP_CLASSES，即會歸類成 person / bicycle / car 的 CODa 類別），
+  2. bbox 標註中至少有一個物件屬於 --classes（預設 KEEP_CLASSES，即 Pedestrian / Bike / Car），
      且指定 --occlusion 時，該物件的 isOccluded 也要符合
   3. 指定 --max-yaw-rate 時，機器人的 |yaw rate|（°/s，由 poses/dense 計算）不超過此值。
      轉彎時 LiDAR 與相機的取樣時間差會讓點雲投影到影像上產生水平偏移（7°/s 約偏 15 px）

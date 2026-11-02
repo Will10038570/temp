@@ -40,7 +40,7 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 ### 3.1 2D 偵測（`q1/detection/yolo.py`）
 
 - 預設使用 ultralytics YOLO（`yolo11s.pt`），`imgsz=1280`，`conf=0.25`。
-- 只處理 `TARGET_CLASSES` = person、bicycle、car（`q1/data/classes.py`）。YOLO 推論時就只保留 person、bicycle、car、bus、truck，並把 bus、truck 歸為 car（motorcycle 忽略），歸類後再做一次 NMS 合併重複框；其他 COCO 類別一律不輸出。CODa GT 也同樣歸類（Pedestrian→person、Bike→bicycle，Car、Bus、Pickup/Delivery Truck、Service/Utility Vehicle→car；Motorcycle、Scooter 等忽略）。
+- 只處理 `TARGET_CLASSES` = person、bicycle、car（`q1/data/classes.py`）。YOLO 推論時只保留 COCO 的 person、bicycle、car 三類；bus、truck、motorcycle 等**不併入 car**，和其他 COCO 類別一樣不輸出。CODa GT 也只保留 Pedestrian→person、Bike→bicycle、Car→car 三類；Bus、Pickup/Delivery Truck、Service/Utility Vehicle、Motorcycle、Scooter 等一律忽略（YOLO 分不出這麼多種車輛，不合併）。
 - 也可以用 `--dets` 讀現有的 `detections.csv`，不重跑 YOLO。
 
 ### 3.2 整幀點雲前處理（`q1/distance/points.py`、`ground.py`）
@@ -67,6 +67,7 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 4. **打分選群**：`score = w_center × center + w_cov × cov`，取分數最高的候選群。預設兩個權重都是 0.5。
    - `center`：群投影位置（中位數）離 core 框中心的正規化距離，換算成 0–1 的分數，中心為 1、角落為 0。
    - `cov`：群的 2D 外框在 core 框寬度和高度方向的覆蓋比例相乘。真正的物件通常會撐滿框，前景遮擋物和背景通常不會。
+   - 選中群的點數少於 `min_cluster`（5）時，結果標為 `invalid`，不往下做。
 5. **往外長回**：從選中的群出發，在完整 bbox 內以同一個 eps 做 region growing。只能長到 core 外的點，core 內屬於其他群的點視為阻擋。
 6. **距離**：
    - `dist`：最終點在相機座標的歐氏距離中位數。這是主要輸出。
@@ -77,10 +78,8 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 
 | status | 意義 |
 |---|---|
-| `ok` | 成功，最終點數至少 `min_final`（5） |
-| `few_points` | 有選到群，但最終點數少於 `min_final`，距離可信度低 |
-| `no_cluster` | core 內有點，但沒有任何群的點數達到 `min_points` |
-| `no_points` | core 內的點少於 `min_points`，通常是物件太遠、太小，或被地面濾除 |
+| `valid` | 成功：選中群的點數至少 `min_cluster`（5），已往外長回並算出距離 |
+| `invalid` | 失敗，`dist_m`、`depth_m` 為空。可能原因：core 內的點少於 `min_points`（物件太遠、太小，或被地面濾除）；沒有任何群的點數達到 `min_points`；或選中群的點數少於 `min_cluster`。可用 `n_core`、`n_clusters`、`n_candidates` 欄位判斷是哪一種 |
 
 ## 4. 參數（`q1/pipeline.py` 的 `DistanceConfig`）
 
@@ -98,9 +97,11 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 | `min_ratio` | 0.3 | 候選群點數至少是最大群的幾倍 |
 | `w_center` | 0.5 | 選群分數中「靠近中心」的權重 |
 | `w_cov` | 0.5 | 選群分數中「2D 覆蓋率」的權重 |
-| `min_final` | 5 | 最終點數低於此值時標為 `few_points` |
+| `min_cluster` | 5 | 選中群（往外長回之前）的點數低於此值時標為 `invalid` |
 
 ## 5. 執行（在 `src/` 下）
+
+frame 來源：預設是 `{coda_root}/kept_frames.csv`，由 `tools/filter_coda_frames.py --apply` 產生，只留下 RGB（`2d_rect/cam0`）、LiDAR、3D bbox 三者齊全，且含目標類別的 frame。目前 CODa_tiny 有 908 個 frame，分布在 21 個 seq。LiDAR 優先讀 `3d_raw/os1`，沒有時改讀 `3d_comp/os1`；tiny split 只有 `3d_comp`，每幀 131072 點（128 線 × 1024）。
 
 ```bash
 python run_pipeline.py                           # kept_frames.csv 的所有 frame，跑 YOLO
@@ -141,9 +142,9 @@ python tools/vis_cluster_selection.py --num 30 --crops   # 隨機抽 30 個 fram
 接在 `run_pipeline.py` 之後執行，讀 `--dist-dir`（預設 `outputs/distance`）的輸出，和 CODa 3D bbox GT 比較。
 
 1. **GT**：只用歸類到 `TARGET_CLASSES` 的 GT（`classes.gt_boxes`）。8 個角點投影到影像取外接矩形，並裁到影像範圍內；有角點在相機後方（深度小於 `min_depth`），或投影完全在影像外的 GT 不列入。
-2. **配對**：不分類別的 greedy 配對。YOLO 框依 score 由高到低排序，每個框取 IoU 最大、尚未配對、且 IoU ≥ `--iou`（預設 0.5）的 GT。沒配對到的 YOLO 框記為 FP、GT 記為 FN，只記錄編號和數量。類別是否一致另外記錄在 `class_match`。
+2. **配對**：依類別的 greedy 配對。YOLO 框依 score 由高到低排序，每個框取**同類別**、IoU 最大、尚未配對、且 IoU ≥ `--iou`（預設 0.5）的 GT；跨類別的 IoU 視為 −1，不會配對。沒配對到的 YOLO 框記為 FP（包含位置對但類別錯的）、GT 記為 FN，只記錄編號和數量。`unmatched.csv` 的 `best_iou` 用的是不分類別的原始 IoU。因為依類別配對，`class_match` 和 `class_accuracy_on_TP` 恆為 1。
 3. **GT 距離**：用 `timing.json` 記錄的 `DistanceConfig` 重建 FramePoints，和 pipeline 是同一份點（去近點、去地面、只留影像內）。取落在 GT 3D box 內的點，算相機座標歐氏距離的中位數，定義和 `dist_m` 相同。
-4. **誤差**：`err_m = dist_m − gt_dist_m`，有正負號；負值表示估得比較近。只有 pipeline 的 status 是 `ok`、且 GT box 內至少有 `--min-gt-points`（5）個點的配對才算誤差。其餘配對的 `eval` 欄位分別標為 `pred_<status>` 或 `gt_few_points`。
+4. **誤差**：`err_m = dist_m − gt_dist_m`，有正負號；負值表示估得比較近。只有 pipeline 的 status 是 `valid`、且 GT box 內至少有 `--min-gt-points`（5）個點的配對才算誤差。其餘配對的 `eval` 欄位分別標為 `pred_invalid` 或 `gt_few_points`。
 
 ```bash
 python run_eval.py                     # → outputs/eval/
@@ -160,4 +161,4 @@ python run_eval.py --iou 0.3 --outdir ../outputs/eval_iou03
 - 只用單幀，沒有做時間上的平滑或追蹤。
 - 沒有做 z-buffer 去遮擋。LiDAR 與相機之間的視差，可能讓被遮住的背景點投影進框內。
 - 重疊的偵測框會各自獨立選群，同一批點可能同時被兩個框使用。
-- 距離估計每幀約 170 ms，主要花在分群和 RANSAC，尚未優化。
+- 距離估計每幀平均約 220 ms（中位數 203 ms、P95 366 ms，908 幀實測），主要花在分群和 RANSAC，尚未優化。

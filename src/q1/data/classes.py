@@ -7,25 +7,19 @@ YOLO 預測（COCO 類別）與 CODa 3D bbox 標註（CODa 類別）都先對應
 # 目標類別（沿用 COCO 名稱）
 TARGET_CLASSES = ["person", "bicycle", "car"]
 
-# YOLO（COCO）類別 → 目標類別。bus、truck 歸為 car；motorcycle 忽略
+# YOLO（COCO）類別 → 目標類別。只保留三類，bus、truck、motorcycle 等不併入 car，直接忽略
 COCO_TO_TARGET = {
     "person": "person",
     "bicycle": "bicycle",
     "car": "car",
-    "bus": "car",
-    "truck": "car",
 }
 
-# CODa 標註類別 → 目標類別。各種汽車／卡車／巴士歸為 car；Motorcycle、Scooter 等忽略
+# CODa 標註類別 → 目標類別。只保留三類；Bus、各種 Truck／Vehicle 不併入 car
+# （YOLO 分不出這麼多種車輛），和 Motorcycle、Scooter 等一樣忽略
 CODA_TO_TARGET = {
     "Pedestrian": "person",
     "Bike": "bicycle",
     "Car": "car",
-    "Bus": "car",
-    "Pickup Truck": "car",
-    "Delivery Truck": "car",
-    "Service Vehicle": "car",
-    "Utility Vehicle": "car",
 }
 
 # 相容舊名稱（filter_coda_frames.py 用 key 篩 CODa 類別）
