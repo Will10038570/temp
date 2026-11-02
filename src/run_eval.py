@@ -1,7 +1,7 @@
 """距離估計的量化驗證，接在 run_pipeline.py 之後執行：讀它的輸出，和 CODa 3D bbox GT 比較。
 
-  1. 配對：GT 3D bbox 8 個角點投影到影像取外接矩形，和 YOLO 框做不分類別的 greedy 配對（IoU >= --iou）。
-     沒配對到的 YOLO 框記為 FP、GT 記為 FN，只記錄編號與數量，不算距離。
+  1. 配對：GT 3D bbox 8 個角點投影到影像取外接矩形，和 YOLO 框做依類別的 greedy 配對（同類別 IoU >= --iou）。
+     類別不符或 IoU 不足的 YOLO 框記為 FP、GT 記為 FN，只記錄編號與數量，不算距離。
   2. 距離：配對成功的，GT 距離 = FramePoints 中落在 GT 3D box 內的點的相機座標歐氏距離中位數，
      和 pipeline 的 dist_m（選中 cluster 點的中位數）比較。err_m = dist_m − gt_dist_m（有正負號）。
      FramePoints 用 timing.json 記錄的 DistanceConfig 重建，和 pipeline 用的是同一份點（去近點、去地面、只留影像內）。
@@ -103,14 +103,16 @@ def main():
         n_pred += len(preds)
         n_gt += len(gts)
         matches, fp_idx, fn_idx, iou = greedy_match(pred_boxes, [float(r["score"]) for r in preds],
-                                                    [g["bbox2d"] for g in gts], args.iou)
+                                                    [g["bbox2d"] for g in gts], args.iou,
+                                                    pred_classes=[r["class"] for r in preds],
+                                                    gt_classes=[g["box"]["classId"] for g in gts])
 
         fp = prepare_points(seq.read_lidar(frame), calib, **cfg.point_kwargs()) if matches else None
         for pi, gi, v in matches:
             r, g = preds[pi], gts[gi]["box"]
             gt_n, gt_d = gt_distance(fp, gts[gi]["corners"])
             d = float(r["dist_m"]) if r["dist_m"] not in ("", "nan") else float("nan")
-            if r["status"] != "ok":
+            if r["status"] != "valid":
                 ev = f"pred_{r['status']}"
             elif gt_n < args.min_gt_points:
                 ev = "gt_few_points"

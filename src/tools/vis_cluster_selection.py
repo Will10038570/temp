@@ -92,8 +92,8 @@ def main():
             if args.crops:
                 cv2.imencode(".jpg", crop_box(img, pred["bbox"]))[1].tofile(
                     args.outdir / "crops" / f"{s}_{frame}_{j}_{pred['category']}.jpg")
-        n_ok = sum(r["status"] == "ok" for _, r in results)
-        print(f"[{n_done}/{len(keys)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} ok -> {out}")
+        n_ok = sum(r["status"] == "valid" for _, r in results)
+        print(f"[{n_done}/{len(keys)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} valid -> {out}")
         if args.show:
             cv2.imshow("cluster selection", img)
             if cv2.waitKey(0) & 0xFF == ord("q"):

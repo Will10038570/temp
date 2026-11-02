@@ -109,11 +109,11 @@ def grow(xyz, seed_mask, blocked_mask, eps):
 
 
 def select_object_points(uv, xyz, xyz_cam, box, *, shrink=0.8, eps_min=0.3, eps_k=2.0, min_points=3,
-                         min_ratio=0.3, w_center=0.5, w_cov=0.5, min_final=5):
+                         min_ratio=0.3, w_center=0.5, w_cov=0.5, min_cluster=5):
     """單一偵測框的完整流程。uv / xyz / xyz_cam 是已去地面、已在影像內的點（FramePoints 的欄位）。
 
     回傳 dict：
-      status   ok / no_points / no_cluster / few_points
+      status   valid / invalid
       in_box   完整 bbox 內的點 mask（對應輸入的點）
       core     core 區域內的點 mask
       labels   core 點的群編號（長度 = core.sum()，-1 為雜訊）
@@ -126,7 +126,7 @@ def select_object_points(uv, xyz, xyz_cam, box, *, shrink=0.8, eps_min=0.3, eps_
     core_box = shrink_box(box, shrink)
     full = in_box(uv, box)
     core = full & in_box(uv, core_box)
-    res = {"status": "no_points", "in_box": full, "core": core, "labels": np.zeros(0, int),
+    res = {"status": "invalid", "in_box": full, "core": core, "labels": np.zeros(0, int),
            "clusters": [], "chosen": None, "final": np.zeros(len(uv), bool), "core_box": core_box,
            "eps": np.nan, "dist": np.nan, "depth": np.nan, "extent": None, "iou": np.nan,
            "cov_w": np.nan, "cov_h": np.nan}
@@ -139,9 +139,11 @@ def select_object_points(uv, xyz, xyz_cam, box, *, shrink=0.8, eps_min=0.3, eps_
     res.update(eps=eps, labels=labels, clusters=clusters)
     cands = [c for c in clusters if c["candidate"]]
     if not cands:
-        res["status"] = "no_cluster"
         return res
     best = max(cands, key=lambda c: c["score"])
+    # 選中群點數不足 → invalid
+    if best["n"] < min_cluster:
+        return res
     res["chosen"] = best["id"]
 
     core_idx = np.flatnonzero(core)
@@ -158,5 +160,5 @@ def select_object_points(uv, xyz, xyz_cam, box, *, shrink=0.8, eps_min=0.3, eps_
     res.update(final=final, extent=ext, iou=box_iou(ext, box), cov_w=cw, cov_h=ch,
                dist=float(np.median(np.linalg.norm(xyz_cam[final], axis=1))),
                depth=float(np.median(xyz_cam[final][:, 2])),
-               status="ok" if final.sum() >= min_final else "few_points")
+               status="valid")
     return res

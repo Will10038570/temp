@@ -98,8 +98,8 @@ def main():
         _, results = estimate_frame(points, calibs[s], preds, cfg, set(args.classes))
         dist_ms.append((time.perf_counter() - t0) * 1000)
         rows += [result_row(s, frame, j, pred, res) for j, (pred, res) in enumerate(results)]
-        n_ok = sum(r["status"] == "ok" for _, r in results)
-        print(f"[{i}/{len(items)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} ok, {dist_ms[-1]:.0f} ms")
+        n_ok = sum(r["status"] == "valid" for _, r in results)
+        print(f"[{i}/{len(items)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} valid, {dist_ms[-1]:.0f} ms")
     total_s = time.perf_counter() - t_start
 
     with open(args.outdir / "distances.csv", "w", newline="", encoding="utf-8") as f:

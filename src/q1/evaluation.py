@@ -1,7 +1,7 @@
 """距離估計的量化驗證：YOLO 偵測框與 CODa 3D bbox GT 配對，再比較兩邊的點雲距離。
 
   1. GT 3D bbox 的 8 個角點投影到影像取外接矩形（投影不到影像內的 GT 不列入）
-  2. 不分類別 greedy 配對：pred 依 score 由高到低，取 IoU 最大、尚未配對且 >= 門檻的 GT
+  2. 依類別 greedy 配對：pred 依 score 由高到低，取同類別 IoU 最大、尚未配對且 >= 門檻的 GT；類別不符的算 FP
   3. 配對成功的，GT 距離 = FramePoints 中落在 GT 3D box 內的點，在相機座標的歐氏距離中位數
      （和 select_object_points 的 dist 定義相同，點也來自同一份去近點、去地面、只留影像內的 FramePoints）
 
@@ -26,21 +26,31 @@ def project_gt(boxes, calib, min_depth):
     return out
 
 
-def greedy_match(pred_boxes, pred_scores, gt_boxes, iou_thr=0.5):
-    """不分類別的 greedy 配對。
+def greedy_match(pred_boxes, pred_scores, gt_boxes, iou_thr=0.5, pred_classes=None, gt_classes=None):
+    """依類別的 greedy 配對：pred 依 score 由高到低，取同類別 IoU 最大、尚未配對且 >= 門檻的 GT。
+
+    pred_classes / gt_classes：長度與 pred_boxes / gt_boxes 相同的類別名稱 list；
+    提供時跨類別的 IoU 設為 -1，類別不同的配對不成立（pred 算 FP，GT 繼續等待）。
 
     回傳 (matches, fp, fn, iou)：
       matches  [(pred index, gt index, IoU), ...]
       fp / fn  沒配對到的 pred / gt index
-      iou      len(pred) x len(gt) 的 IoU 矩陣
+      iou      len(pred) x len(gt) 的原始 IoU 矩陣（未遮掩，供 unmatched best_iou 使用）
     """
     iou = np.array([[box_iou(p, g) for g in gt_boxes] for p in pred_boxes],
                    dtype=float).reshape(len(pred_boxes), len(gt_boxes))
+    # 類別遮掩：跨類別設為 -1，讓配對邏輯自然跳過
+    eff = iou.copy()
+    if pred_classes is not None and gt_classes is not None:
+        for pi, pc in enumerate(pred_classes):
+            for gi, gc in enumerate(gt_classes):
+                if pc != gc:
+                    eff[pi, gi] = -1.0
     used = np.zeros(len(gt_boxes), bool)
     matches = []
     if len(gt_boxes):
         for pi in np.argsort(-np.asarray(pred_scores, dtype=float), kind="stable"):
-            cand = np.where(used, -1.0, iou[pi])
+            cand = np.where(used, -1.0, eff[pi])
             gi = int(np.argmax(cand))
             if cand[gi] >= iou_thr:
                 used[gi] = True

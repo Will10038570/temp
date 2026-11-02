@@ -102,7 +102,7 @@ def draw_cluster_selection(img, pred, res, uv, xyz_cam, r=2):
     if res["chosen"] is not None:
         head = (f"{pred['category']} {res['dist']:.1f}m n{int(res['final'].sum())} "
                 f"IoU{res['iou']:.2f} cov{res['cov_w']:.2f}x{res['cov_h']:.2f}")
-        if res["status"] != "ok":
+        if res["status"] != "valid":
             head += f" [{res['status']}]"
     else:
         head = f"{pred['category']} [{res['status']}]"

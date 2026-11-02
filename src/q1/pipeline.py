@@ -29,7 +29,7 @@ class DistanceConfig:
     min_ratio: float = 0.3
     w_center: float = 0.5
     w_cov: float = 0.5
-    min_final: int = 5
+    min_cluster: int = 5
 
     def point_kwargs(self):
         return {k: getattr(self, k) for k in ("min_range", "min_depth", "ground_thr")}
