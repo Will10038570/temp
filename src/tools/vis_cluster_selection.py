@@ -76,7 +76,7 @@ def main():
         seq = CodaSequence(args.root, s, args.cam)
         if s not in calibs:
             calibs[s] = seq.read_calib()
-        fp, results = estimate_frame(seq.read_lidar(frame), calibs[s], dets[(s, frame)], cfg, set(args.classes))
+        fp, results, _ = estimate_frame(seq.read_lidar(frame), calibs[s], dets[(s, frame)], cfg, set(args.classes))
 
         img = (seq.read_image(frame) * args.dim).astype(np.uint8)
         for pred, res in sorted(results, key=lambda t: -box_area(t[0])):  # 大框先畫，小物件不會被蓋住

@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from q1.data.classes import TARGET_CLASSES
 from q1.distance.cluster import select_object_points
 from q1.distance.points import prepare_points
+from q1.profiler import StageTimer
 
 # 要估距離的類別：person、bicycle、car（見 q1/data/classes.py）
 
@@ -46,10 +47,12 @@ def estimate_frame(points, calib, preds, cfg=DistanceConfig(), classes=TARGET_CL
     回傳 (FramePoints, [(pred, result), ...])，result 見 select_object_points。
     不在 classes 內的預測直接略過。
     """
-    fp = prepare_points(points, calib, **cfg.point_kwargs())
-    results = [(p, select_object_points(fp.uv, fp.xyz, fp.xyz_cam, p["bbox"], **cfg.select_kwargs()))
-               for p in preds if classes is None or p["category"] in classes]
-    return fp, results
+    with StageTimer() as t_prepare:
+        fp = prepare_points(points, calib, **cfg.point_kwargs())
+    with StageTimer() as t_cluster:
+        results = [(p, select_object_points(fp.uv, fp.xyz, fp.xyz_cam, p["bbox"], **cfg.select_kwargs()))
+                   for p in preds if classes is None or p["category"] in classes]
+    return fp, results, {"prepare": t_prepare.result, "cluster": t_cluster.result}
 
 
 RESULT_FIELDS = ["seq", "frame", "det", "class", "score", "x1", "y1", "x2", "y2", "status",

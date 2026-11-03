@@ -109,7 +109,7 @@ class Viewer:
         for g in self.geoms:
             vis.remove_geometry(g, reset_bounding_box=False)
         preds = self.dets.get((int(self.seq.seq), frame), [])
-        fp, results = estimate_frame(self.seq.read_lidar(frame), self.calib, preds, self.cfg, set(self.args.classes))
+        fp, results, _ = estimate_frame(self.seq.read_lidar(frame), self.calib, preds, self.cfg, set(self.args.classes))
 
         selected = np.zeros(len(fp.xyz), bool)
         for _, res in results:

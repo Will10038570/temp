@@ -4,10 +4,10 @@
 
 | Stage | 內容 | 程式碼位置 | 主要資源 |
 |---|---|---|---|
-| 1. Data I/O | `read_image` + `read_lidar` | `run_pipeline.py:92-96` | 磁碟 |
-| 2. YOLO | `yolo()` 推論 | `run_pipeline.py:92` | GPU |
-| 3. prepare_points | 去近點、去地面、投影、裁切 | `distance/points.py:18` | CPU |
-| 4. clustering | `select_object_points` × N bboxes | `distance/cluster.py:111` | CPU |
+| 1. Data I/O | `read_image` + `read_lidar` | `run_pipeline.py:88-90` | 磁碟 |
+| 2. YOLO | `yolo()` 推論 | `run_pipeline.py:91-92` | GPU |
+| 3. prepare_points | 去近點、去地面、投影、裁切 | `pipeline.py:50-51` | CPU |
+| 4. clustering | `select_object_points` × N bboxes | `pipeline.py:52-54` | CPU |
 
 ---
 
@@ -36,26 +36,15 @@ PyTorch 提供 `reset_peak_memory_stats()` 可在每段開始前清掉峰值紀�
 
 ## profiling.json 格式
 
-每次執行 `run_pipeline.py` 會在 `--outdir`（預設 `outputs/distance`）產生 `profiling.json`：
+每次執行 `run_pipeline.py` 會在 `--outdir`（預設 `outputs/distance`）產生 `profiling.json`。
+檔案只包含 summary（由 `profiler.py:compute_summary` 產生，`per_frame` 原始資料不寫入檔案）：
 
 ```json
 {
-  "per_frame": [
-    {
-      "seq": 0,
-      "frame": 10,
-      "io":      {"wall_ms": 12.3, "cpu_ms": 2.1, "gpu_peak_mb": 0.0, "ram_delta_mb": 45.2},
-      "yolo":    {"wall_ms": 38.1, "cpu_ms": 4.5, "gpu_peak_mb": 512.3, "ram_delta_mb": 1.2},
-      "prepare": {"wall_ms": 5.2,  "cpu_ms": 5.1, "gpu_peak_mb": 0.0, "ram_delta_mb": 8.4},
-      "cluster": {"wall_ms": 3.8,  "cpu_ms": 3.7, "gpu_peak_mb": 0.0, "ram_delta_mb": 2.1}
-    }
-  ],
-  "summary": {
-    "io":      {"wall_ms": {"mean": 12.3, "p95": 18.1}, "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}},
-    "yolo":    {"wall_ms": {"mean": 38.1, "p95": 45.2}, "gpu_peak_mb": {"mean": 512.3, "p95": 520.1}},
-    "prepare": {"wall_ms": {"mean": 5.2,  "p95": 7.3},  "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}},
-    "cluster": {"wall_ms": {"mean": 3.8,  "p95": 6.1},  "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}}
-  }
+  "io":      {"wall_ms": {"mean": 12.3, "p95": 18.1}, "cpu_ms": {"mean": 2.1, "p95": 3.0}, "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}, "ram_delta_mb": {"mean": 45.2, "p95": 60.0}},
+  "yolo":    {"wall_ms": {"mean": 38.1, "p95": 45.2}, "cpu_ms": {"mean": 4.5, "p95": 5.1}, "gpu_peak_mb": {"mean": 512.3, "p95": 520.1}, "ram_delta_mb": {"mean": 1.2, "p95": 2.0}},
+  "prepare": {"wall_ms": {"mean": 5.2,  "p95": 7.3},  "cpu_ms": {"mean": 5.1, "p95": 6.8}, "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}, "ram_delta_mb": {"mean": 8.4, "p95": 10.1}},
+  "cluster": {"wall_ms": {"mean": 3.8,  "p95": 6.1},  "cpu_ms": {"mean": 3.7, "p95": 5.9}, "gpu_peak_mb": {"mean": 0.0, "p95": 0.0}, "ram_delta_mb": {"mean": 2.1, "p95": 3.5}}
 }
 ```
 

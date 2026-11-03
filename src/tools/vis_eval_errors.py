@@ -31,6 +31,7 @@ from q1.data.projection import project_bbox  # noqa: E402
 from q1.distance.cluster import box_iou  # noqa: E402
 from q1.evaluation import greedy_match, project_gt  # noqa: E402
 from q1.paths import load_paths  # noqa: E402
+from q1.pipeline import DistanceConfig  # noqa: E402
 
 GREEN, RED, BLUE, GRAY = (0, 200, 0), (0, 0, 255), (255, 120, 0), (160, 160, 160)
 
@@ -83,6 +84,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dist-dir", type=Path, default=paths["outputs"] / "distance")
     p.add_argument("--eval-dir", type=Path, default=paths["outputs"] / "eval")
+    p.add_argument("--root", type=Path, default=paths["coda_root"], help="CODa 根目錄")
+    p.add_argument("--cam", default="cam0")
+    p.add_argument("--min-depth", type=float, default=DistanceConfig().min_depth)
     p.add_argument("--iou", type=float, default=None, help="預設用 eval-dir/summary.json 的門檻")
     p.add_argument("--near", type=float, default=0.3, help="best IoU >= 此值的 FP/FN 標 near")
     p.add_argument("--n", type=int, default=100)
@@ -91,12 +95,9 @@ def main():
     p.add_argument("--outdir", type=Path, default=paths["outputs"] / "vis_eval")
     args = p.parse_args()
 
-    with open(args.dist_dir / "timing.json", encoding="utf-8") as f:
-        timing = json.load(f)
     with open(args.eval_dir / "summary.json", encoding="utf-8") as f:
         iou_thr = args.iou if args.iou is not None else json.load(f)["iou_thr"]
-    root, cam = Path(timing["root"]), timing.get("cam", "cam0")
-    min_depth = timing["config"]["min_depth"]
+    root, cam, min_depth = args.root, args.cam, args.min_depth
 
     preds_by = defaultdict(list)
     with open(args.dist_dir / "distances.csv", encoding="utf-8") as f:

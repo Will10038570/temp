@@ -4,7 +4,7 @@
      類別不符或 IoU 不足的 YOLO 框記為 FP、GT 記為 FN，只記錄編號與數量，不算距離。
   2. 距離：配對成功的，GT 距離 = FramePoints 中落在 GT 3D box 內的點的相機座標歐氏距離中位數，
      和 pipeline 的 dist_m（選中 cluster 點的中位數）比較。err_m = dist_m − gt_dist_m（有正負號）。
-     FramePoints 用 timing.json 記錄的 DistanceConfig 重建，和 pipeline 用的是同一份點（去近點、去地面、只留影像內）。
+     FramePoints 用 DistanceConfig 預設值重建，和 pipeline 用的是同一份點（去近點、去地面、只留影像內）。
 
 範例（在 src/ 下執行）：
   python run_pipeline.py
@@ -63,26 +63,9 @@ def r3(v):
     return round(v, 3) if np.isfinite(v) else ""
 
 
-def main():
-    paths = load_paths()
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dist-dir", type=Path, default=paths["outputs"] / "distance",
-                   help="run_pipeline.py 的輸出資料夾（distances.csv、timing.json、frames.csv）")
-    p.add_argument("--root", type=Path, help="CODa 根目錄；預設用 timing.json 記錄的，沒有時用 paths.yaml")
-    p.add_argument("--cam", help="預設用 timing.json 記錄的，沒有時用 cam0")
-    p.add_argument("--list", type=Path, default=paths["coda_root"] / "kept_frames.csv",
-                   help="--dist-dir 沒有 frames.csv 時改用這份 frame 清單")
-    p.add_argument("--iou", type=float, default=0.5, help="配對的 IoU 門檻")
-    p.add_argument("--min-gt-points", type=int, default=5, help="GT box 內的點少於此值時不算距離誤差")
-    p.add_argument("--outdir", type=Path, default=paths["outputs"] / "eval")
-    args = p.parse_args()
-
-    with open(args.dist_dir / "timing.json", encoding="utf-8") as f:
-        timing = json.load(f)
-    cfg = DistanceConfig(**timing["config"])
-    root = args.root or Path(timing.get("root", paths["coda_root"]))
-    cam = args.cam or timing.get("cam", "cam0")
-    dists = load_distances(args.dist_dir / "distances.csv")
+def _run(args, dist_cfg: DistanceConfig) -> None:
+    """Eval 核心：讀 distances.csv，和 GT 比對，寫 matches/unmatched/summary。"""
+    dists  = load_distances(args.dist_dir / "distances.csv")
     frames = load_frames(args.dist_dir, args.list)
 
     match_rows, unmatched_rows = [], []
@@ -91,15 +74,15 @@ def main():
     seqs, calibs = {}, {}
     for i, (s, frame) in enumerate(frames, 1):
         if s not in seqs:
-            seqs[s] = CodaSequence(root, s, cam)
+            seqs[s] = CodaSequence(args.root, s, args.cam)
             calibs[s] = seqs[s].read_calib()
         seq, calib = seqs[s], calibs[s]
         if not seq.bbox_path(frame).exists():
-            no_anno.append((s, frame))  # 沒有標註的 frame 無法判斷對錯，整幀跳過
+            no_anno.append((s, frame))
             continue
         preds = dists.get((s, frame), [])
         pred_boxes = [[float(r[k]) for k in ("x1", "y1", "x2", "y2")] for r in preds]
-        gts = project_gt(gt_boxes(seq.read_bboxes(frame)), calib, cfg.min_depth)
+        gts = project_gt(gt_boxes(seq.read_bboxes(frame)), calib, dist_cfg.min_depth)
         n_pred += len(preds)
         n_gt += len(gts)
         matches, fp_idx, fn_idx, iou = greedy_match(pred_boxes, [float(r["score"]) for r in preds],
@@ -107,7 +90,7 @@ def main():
                                                     pred_classes=[r["class"] for r in preds],
                                                     gt_classes=[g["box"]["classId"] for g in gts])
 
-        fp = prepare_points(seq.read_lidar(frame), calib, **cfg.point_kwargs()) if matches else None
+        fp = prepare_points(seq.read_lidar(frame), calib, **dist_cfg.point_kwargs()) if matches else None
         for pi, gi, v in matches:
             r, g = preds[pi], gts[gi]["box"]
             gt_n, gt_d = gt_distance(fp, gts[gi]["corners"])
@@ -175,6 +158,60 @@ def main():
         for c, st in summary["distance_error_by_gt_class"].items():
             print(f"  {c:<8s} n={st['n']:<5d} 平均 {st['mean_signed_m']:+.3f} m  MAE {st['mae_m']:.3f} m")
     print(f"-> {args.outdir}")
+
+
+def main():
+    # 若只帶 --precision，從 trt_quant.yaml 讀取所有參數
+    if "--precision" in sys.argv:
+        import argparse as _ap
+        _p = _ap.ArgumentParser(add_help=False)
+        _p.add_argument("--precision", choices=["fp32", "fp16", "int8", "fp8"])
+        _ns, _ = _p.parse_known_args()
+        if _ns.precision:
+            from tools._config import load_config
+            run_from_config(load_config(), _ns.precision)
+            return
+
+    paths = load_paths()
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--dist-dir", type=Path, default=paths["outputs"] / "distance",
+                   help="run_pipeline.py 的輸出資料夾（distances.csv、frames.csv）")
+    p.add_argument("--root", type=Path, help="CODa 根目錄；預設用 paths.yaml")
+    p.add_argument("--cam", help="預設 cam0")
+    p.add_argument("--list", type=Path, default=paths["coda_root"] / "kept_frames.csv",
+                   help="--dist-dir 沒有 frames.csv 時改用這份 frame 清單")
+    p.add_argument("--iou", type=float, default=0.5, help="配對的 IoU 門檻")
+    p.add_argument("--min-gt-points", type=int, default=5, help="GT box 內的點少於此值時不算距離誤差")
+    p.add_argument("--outdir", type=Path, default=paths["outputs"] / "eval")
+    args = p.parse_args()
+    args.root = args.root or paths["coda_root"]
+    args.cam  = args.cam  or "cam0"
+    _run(args, DistanceConfig())
+
+
+def run_from_config(trt_cfg: dict, precision: str) -> None:
+    """從 trt_quant.yaml 讀取所有參數，執行指定精度的 evaluation。"""
+    import argparse
+    from dataclasses import fields as dc_fields
+
+    paths = trt_cfg["paths"]
+    p_cfg = trt_cfg["pipeline"]
+    e_cfg = trt_cfg["evaluation"]
+    d_cfg = trt_cfg.get("distance", {})
+
+    args = argparse.Namespace(
+        dist_dir       = paths["outdir"] / f"distance_{precision}",
+        root           = paths["coda_root"],
+        cam            = p_cfg["cam"],
+        list           = paths["kept_frames"],
+        iou            = e_cfg["iou_thr"],
+        min_gt_points  = e_cfg["min_gt_points"],
+        outdir         = paths["outdir"] / f"eval_{precision}",
+    )
+
+    dc_defaults = {f.name: f.default for f in dc_fields(DistanceConfig)}
+    dist_cfg = DistanceConfig(**{k: d_cfg.get(k, v) for k, v in dc_defaults.items()})
+    _run(args, dist_cfg)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ frame 來源（擇一）：
   distances.csv   每個偵測框一列：狀態、各階段點數、距離（dist_m 為相機座標歐氏距離中位數）
   detections.csv  YOLO 原始結果（只在跑 YOLO 時）
   frames.csv      這次處理的所有 frame（含沒有偵測框的），給 run_eval.py 算 FN
-  timing.json     YOLO 與距離估計的耗時、資料根目錄、相機、DistanceConfig
+  profiling.json  YOLO 與距離估計的耗時、資料根目錄、相機、DistanceConfig
 接著可以跑 run_eval.py 和 CODa 3D bbox GT 比較。
 """
 import argparse
@@ -30,7 +30,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from q1.data.coda import CodaSequence  # noqa: E402
-from q1.detection.yolo import DET_FIELDS, YoloDetector, detection_rows, load_detections  # noqa: E402
+from q1.detection.yolo import DET_FIELDS, YoloDetector, detection_rows  # noqa: E402
+from q1.profiler import StageTimer, compute_summary  # noqa: E402
 from q1.paths import load_paths  # noqa: E402
 from q1.pipeline import RESULT_FIELDS, TARGET_CLASSES, DistanceConfig, estimate_frame, result_row  # noqa: E402
 
@@ -48,7 +49,79 @@ def list_frames(args):
     return items[:args.num] if args.num else items
 
 
+def _run(args, dist_cfg: DistanceConfig) -> None:
+    """Pipeline 核心：list_frames → YOLO → 距離估計 → 寫輸出檔。"""
+    items = list_frames(args)
+    if not items:
+        print("沒有要處理的 frame")
+        return
+    yolo = YoloDetector(args.weights, args.imgsz, args.conf, args.device, args.half,
+                        iou=getattr(args, "iou_nms", 0.7))
+    args.outdir.mkdir(parents=True, exist_ok=True)
+
+    rows, det_rows, prof_records, calibs = [], [], [], {}
+    t_start = time.perf_counter()
+    for i, (s, frame) in enumerate(items, 1):
+        seq = CodaSequence(args.root, s, args.cam)
+        if s not in calibs:
+            calibs[s] = seq.read_calib()
+        with StageTimer() as t_io:
+            img    = seq.read_image(frame)
+            points = seq.read_lidar(frame)
+        with StageTimer() as t_yolo:
+            preds = yolo(img, s, frame)
+        det_rows += detection_rows(s, frame, preds)
+        _, results, stage_times = estimate_frame(points, calibs[s], preds, dist_cfg, set(args.classes))
+        prof_records.append({"seq": s, "frame": frame,
+                             "io":      t_io.result,
+                             "yolo":    t_yolo.result,
+                             "prepare": stage_times["prepare"],
+                             "cluster": stage_times["cluster"]})
+        rows += [result_row(s, frame, j, pred, res) for j, (pred, res) in enumerate(results)]
+        n_ok = sum(r["status"] == "valid" for _, r in results)
+        print(f"[{i}/{len(items)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} valid, "
+              f"yolo {t_yolo.result['wall_ms']:.0f} ms")
+    total_s = time.perf_counter() - t_start
+
+    with open(args.outdir / "distances.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(RESULT_FIELDS)
+        w.writerows(rows)
+    with open(args.outdir / "frames.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["seq", "frame"])
+        w.writerows(items)
+    profiling = compute_summary(prof_records)
+    with open(args.outdir / "profiling.json", "w", encoding="utf-8") as f:
+        json.dump(profiling, f, ensure_ascii=False, indent=1)
+    with open(args.outdir / "detections.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(DET_FIELDS)
+        w.writerows(det_rows)
+
+    status = [r[RESULT_FIELDS.index("status")] for r in rows]
+    print(f"\n{len(items)} 個 frame、{len(rows)} 個偵測框：" +
+          "、".join(f"{k} {status.count(k)}" for k in sorted(set(status))))
+    smry = profiling
+    print(f"wall_ms mean — io:{smry['io']['wall_ms']['mean']:.1f}  "
+          f"yolo:{smry['yolo']['wall_ms']['mean']:.1f}  "
+          f"prepare:{smry['prepare']['wall_ms']['mean']:.1f}  "
+          f"cluster:{smry['cluster']['wall_ms']['mean']:.1f}  "
+          f"total:{total_s:.1f}s -> {args.outdir}")
+
+
 def main():
+    # 若只帶 --precision，從 trt_quant.yaml 讀取所有參數
+    if "--precision" in sys.argv:
+        import argparse as _ap
+        _p = _ap.ArgumentParser(add_help=False)
+        _p.add_argument("--precision", choices=["fp32", "fp16", "int8", "fp8"])
+        _ns, _ = _p.parse_known_args()
+        if _ns.precision:
+            from tools._config import load_config
+            run_from_config(load_config(), _ns.precision)
+            return
+
     paths = load_paths()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", type=Path, default=paths["coda_root"])
@@ -60,7 +133,6 @@ def main():
     p.add_argument("--classes", nargs="+", default=TARGET_CLASSES, help="要估距離的 COCO 類別")
     p.add_argument("--outdir", type=Path, default=paths["outputs"] / "distance")
     g = p.add_argument_group("2D 偵測")
-    g.add_argument("--dets", type=Path, help="讀現有的 detections.csv，不跑 YOLO")
     g.add_argument("--weights", type=Path, default=paths["outputs"].parent / "models" / "pretrained" / "yolo11s.pt")
     g.add_argument("--imgsz", type=int, default=1280)
     g.add_argument("--conf", type=float, default=0.25)
@@ -71,62 +143,40 @@ def main():
         g.add_argument(f"--{f.name.replace('_', '-')}", type=type(f.default),
                        default=f.default)
     args = p.parse_args()
-    cfg = DistanceConfig(**{f.name: getattr(args, f.name) for f in fields(DistanceConfig)})
+    dist_cfg = DistanceConfig(**{f.name: getattr(args, f.name) for f in fields(DistanceConfig)})
+    _run(args, dist_cfg)
 
-    items = list_frames(args)
-    if not items:
-        sys.exit("沒有要處理的 frame")
-    if args.dets:
-        dets, yolo = load_detections(args.dets, conf=args.conf), None
-    else:
-        dets, yolo = None, YoloDetector(args.weights, args.imgsz, args.conf, args.device, args.half)
-    args.outdir.mkdir(parents=True, exist_ok=True)
 
-    rows, det_rows, dist_ms, calibs = [], [], [], {}
-    t_start = time.perf_counter()
-    for i, (s, frame) in enumerate(items, 1):
-        seq = CodaSequence(args.root, s, args.cam)
-        if s not in calibs:
-            calibs[s] = seq.read_calib()
-        if yolo:
-            preds = yolo(seq.read_image(frame), s, frame)
-            det_rows += detection_rows(s, frame, preds)
-        else:
-            preds = dets.get((s, frame), [])
-        points = seq.read_lidar(frame)
-        t0 = time.perf_counter()
-        _, results = estimate_frame(points, calibs[s], preds, cfg, set(args.classes))
-        dist_ms.append((time.perf_counter() - t0) * 1000)
-        rows += [result_row(s, frame, j, pred, res) for j, (pred, res) in enumerate(results)]
-        n_ok = sum(r["status"] == "valid" for _, r in results)
-        print(f"[{i}/{len(items)}] seq {s} frame {frame}: {len(results)} dets, {n_ok} valid, {dist_ms[-1]:.0f} ms")
-    total_s = time.perf_counter() - t_start
+def run_from_config(trt_cfg: dict, precision: str) -> None:
+    """從 trt_quant.yaml 讀取所有參數，執行指定精度的 pipeline。"""
+    import argparse
+    from dataclasses import fields as dc_fields
 
-    with open(args.outdir / "distances.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(RESULT_FIELDS)
-        w.writerows(rows)
-    with open(args.outdir / "frames.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["seq", "frame"])
-        w.writerows(items)
-    timing = {"num_frames": len(items), "total_s": total_s, "root": str(args.root), "cam": args.cam,
-              "config": asdict(cfg),
-              "distance_ms": {"mean": float(np.mean(dist_ms)), "median": float(np.median(dist_ms)),
-                              "p95": float(np.percentile(dist_ms, 95))}}
-    if yolo:
-        timing["yolo"] = yolo.summary(total_s)
-        with open(args.outdir / "detections.csv", "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(DET_FIELDS)
-            w.writerows(det_rows)
-    with open(args.outdir / "timing.json", "w", encoding="utf-8") as f:
-        json.dump(timing, f, ensure_ascii=False, indent=1)
+    paths   = trt_cfg["paths"]
+    p_cfg   = trt_cfg["pipeline"]
+    exp_cfg = trt_cfg["export"]
+    d_cfg   = trt_cfg.get("distance", {})
 
-    status = [r[RESULT_FIELDS.index("status")] for r in rows]
-    print(f"\n{len(items)} 個 frame、{len(rows)} 個偵測框：" +
-          "、".join(f"{k} {status.count(k)}" for k in sorted(set(status))))
-    print(f"距離估計每幀 mean {timing['distance_ms']['mean']:.1f} ms，總耗時 {total_s:.1f} s -> {args.outdir}")
+    args = argparse.Namespace(
+        root      = paths["coda_root"],
+        cam       = p_cfg["cam"],
+        list      = paths["kept_frames"],
+        seq       = None,
+        all_seqs  = False,
+        num       = p_cfg.get("num_frames"),
+        classes   = TARGET_CLASSES,
+        outdir    = paths["outdir"] / f"distance_{precision}",
+        weights   = paths["outdir"] / "engines" / f"{precision}.engine",
+        imgsz     = exp_cfg["imgsz"],
+        conf      = p_cfg["conf"],
+        iou_nms   = p_cfg["iou_nms"],
+        device    = exp_cfg["device"],
+        half      = False,
+    )
+
+    dc_defaults = {f.name: f.default for f in dc_fields(DistanceConfig)}
+    dist_cfg = DistanceConfig(**{k: d_cfg.get(k, v) for k, v in dc_defaults.items()})
+    _run(args, dist_cfg)
 
 
 if __name__ == "__main__":

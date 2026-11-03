@@ -16,7 +16,9 @@ class YoloDetector:
         from ultralytics import YOLO
         self.torch = torch
         self.model = YOLO(str(weights))
-        self.weights, self.imgsz, self.conf, self.device, self.half = weights, imgsz, conf, device, half
+        self.weights, self.imgsz, self.conf, self.device = weights, imgsz, conf, device
+        # TRT engine 的精度已 bake-in，half 參數在此無意義
+        self.half = None if str(weights).endswith(".engine") else half
         self.iou, self.class_map = iou, class_map
         self.class_ids = [i for i, n in self.model.names.items() if n in class_map]
         self.targets = sorted(set(class_map.values()))
@@ -32,7 +34,7 @@ class YoloDetector:
         from torchvision.ops import batched_nms
         self._sync()
         t0 = time.perf_counter()
-        extra = {"half": True} if self.half else {}  # 新版 ultralytics 對 half 參數會印棄用警告，沒用到就不傳
+        extra = {"half": True} if self.half else {}  # TRT engine 時 self.half is None，自動跳過
         r = self.model.predict(img, imgsz=self.imgsz, conf=self.conf, iou=self.iou, device=self.device,
                                classes=self.class_ids, verbose=False, **extra)[0]
         boxes, scores, cls = r.boxes.xyxy, r.boxes.conf, r.boxes.cls.long()
@@ -66,6 +68,7 @@ class YoloDetector:
             "weights": str(self.weights), "imgsz": self.imgsz, "conf": self.conf, "iou": self.iou,
             "class_map": self.class_map,
             "half": self.half, "device": self.device_name,
+            "engine_mode": "trt" if self.half is None else "pytorch",
             "gpu": self.torch.cuda.get_device_name(0) if cuda else None,
             "num_frames": len(self.records), "warmup_frame_ms": self.records[0][2],
             "yolo_total_s": float(sum(r[2] for r in self.records) / 1000),
