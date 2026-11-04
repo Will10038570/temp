@@ -1,6 +1,6 @@
 """校正幀抽樣：從 kept_frames.csv 跨 seq 分層抽取 PTQ 校正集。
 
-讀取 trt_quant.yaml 的 calibration 區段：
+讀取 quantization.yaml 的 calibration 區段：
   n     - 目標幀數
   seed  - 隨機種子
   cam   - 供 print 統計用（不影響抽樣邏輯）
@@ -65,7 +65,7 @@ def main() -> None:
     paths = cfg["paths"]
 
     kept = paths["kept_frames"]
-    outdir = paths["outdir"]
+    outdir = paths["outputs"]
     outdir.mkdir(parents=True, exist_ok=True)
     out = outdir / "calib_frames.csv"
 

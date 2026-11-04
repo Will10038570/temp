@@ -30,7 +30,7 @@ from q1.data.classes import gt_boxes  # noqa: E402
 from q1.data.coda import CodaSequence  # noqa: E402
 from q1.distance.points import prepare_points  # noqa: E402
 from q1.evaluation import error_stats, greedy_match, gt_distance, project_gt  # noqa: E402
-from q1.paths import load_paths  # noqa: E402
+from q1.paths import load_config, load_paths  # noqa: E402
 from q1.pipeline import DistanceConfig  # noqa: E402
 
 MATCH_FIELDS = ["seq", "frame", "det", "gt_id", "iou", "pred_class", "gt_class", "class_match", "score",
@@ -161,15 +161,14 @@ def _run(args, dist_cfg: DistanceConfig) -> None:
 
 
 def main():
-    # 若只帶 --precision，從 trt_quant.yaml 讀取所有參數
+    # 若帶 --precision，從 paths.yaml + eval.yaml（cam、DistanceConfig 讀 pipeline.yaml）讀取所有參數
     if "--precision" in sys.argv:
         import argparse as _ap
         _p = _ap.ArgumentParser(add_help=False)
         _p.add_argument("--precision", choices=["fp32", "fp16", "int8", "fp8"])
         _ns, _ = _p.parse_known_args()
         if _ns.precision:
-            from tools._config import load_config
-            run_from_config(load_config(), _ns.precision)
+            run_from_config(_ns.precision)
             return
 
     paths = load_paths()
@@ -178,7 +177,7 @@ def main():
                    help="run_pipeline.py 的輸出資料夾（distances.csv、frames.csv）")
     p.add_argument("--root", type=Path, help="CODa 根目錄；預設用 paths.yaml")
     p.add_argument("--cam", help="預設 cam0")
-    p.add_argument("--list", type=Path, default=paths["coda_root"] / "kept_frames.csv",
+    p.add_argument("--list", type=Path, default=paths["kept_frames"],
                    help="--dist-dir 沒有 frames.csv 時改用這份 frame 清單")
     p.add_argument("--iou", type=float, default=0.5, help="配對的 IoU 門檻")
     p.add_argument("--min-gt-points", type=int, default=5, help="GT box 內的點少於此值時不算距離誤差")
@@ -189,24 +188,27 @@ def main():
     _run(args, DistanceConfig())
 
 
-def run_from_config(trt_cfg: dict, precision: str) -> None:
-    """從 trt_quant.yaml 讀取所有參數，執行指定精度的 evaluation。"""
-    import argparse
+def run_from_config(precision: str) -> None:
+    """執行指定精度的 evaluation。
+
+    paths.yaml：資料與輸出路徑；eval.yaml：iou_thr、min_gt_points；
+    pipeline.yaml：cam 與 distance（必須和產生 distances.csv 的 pipeline 一致，所以不在 eval.yaml 重複）。
+    """
     from dataclasses import fields as dc_fields
 
-    paths = trt_cfg["paths"]
-    p_cfg = trt_cfg["pipeline"]
-    e_cfg = trt_cfg["evaluation"]
-    d_cfg = trt_cfg.get("distance", {})
+    paths = load_paths()
+    p_cfg = load_config("pipeline")
+    e_cfg = load_config("eval")
+    d_cfg = p_cfg.get("distance") or {}
 
     args = argparse.Namespace(
-        dist_dir       = paths["outdir"] / f"distance_{precision}",
+        dist_dir       = paths["outputs"] / f"distance_{precision}",
         root           = paths["coda_root"],
         cam            = p_cfg["cam"],
         list           = paths["kept_frames"],
         iou            = e_cfg["iou_thr"],
         min_gt_points  = e_cfg["min_gt_points"],
-        outdir         = paths["outdir"] / f"eval_{precision}",
+        outdir         = paths["outputs"] / f"eval_{precision}",
     )
 
     dc_defaults = {f.name: f.default for f in dc_fields(DistanceConfig)}

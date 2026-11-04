@@ -41,7 +41,6 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 
 - 預設使用 ultralytics YOLO（`yolo11s.pt`），`imgsz=1280`，`conf=0.25`。
 - 只處理 `TARGET_CLASSES` = person、bicycle、car（`q1/data/classes.py`）。YOLO 推論時只保留 COCO 的 person、bicycle、car 三類；bus、truck、motorcycle 等**不併入 car**，和其他 COCO 類別一樣不輸出。CODa GT 也只保留 Pedestrian→person、Bike→bicycle、Car→car 三類；Bus、Pickup/Delivery Truck、Service/Utility Vehicle、Motorcycle、Scooter 等一律忽略（YOLO 分不出這麼多種車輛，不合併）。
-- 也可以用 `--dets` 讀現有的 `detections.csv`，不重跑 YOLO。
 
 ### 3.2 整幀點雲前處理（`q1/distance/points.py`、`ground.py`）
 
@@ -50,7 +49,7 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 1. **去近點**：離 LiDAR 小於 `min_range`（0.5 m）的點丟掉。沒有回波的點會落在原點附近。
 2. **去地面**：用 RANSAC 擬合平面，離地高度不超過 `ground_thr`（0.15 m）的點丟掉。
    - 候選點：os1 座標中 z 介於 −1.5 到 −0.3 m、水平距離小於 30 m 的點。os1 離地約 0.86 m。
-   - 100 次迭代，inlier 門檻 0.1 m，平面法向量與垂直方向的夾角需小於 15°，最後用所有 inlier 做最小平方修正。
+   - 100 次迭代，inlier 門檻 0.1 m，平面法向量與垂直方向的夾角需小於 15°，最後用所有 inlier 做最小平方修正（SVD 取最小奇異值對應的方向當法向量；使用 `full_matrices=False`，只算需要的 Vt，避免產生 M×M 的 U）。
    - 找不到合適的平面時，退回水平面：z = 候選點高度的第 10 百分位數。
    - 必須在分群之前去地面，否則地面點會把物件和背景連成同一群。
 3. **投影**：用 `calib_os1_to_cam` 的 `projection_matrix` 投影到 `2d_rect` 影像，只保留影像內、且相機深度大於 `min_depth`（0.5 m）的點。
@@ -84,6 +83,7 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 ## 4. 參數（`q1/pipeline.py` 的 `DistanceConfig`）
 
 `run_pipeline.py` 和 `tools/vis_cluster_selection.py` 都會從 `DistanceConfig` 自動產生 CLI 參數（底線換成連字號，例如 `--w-cov`）。
+`run_pipeline.py --precision` / `run_eval.py --precision` 則改讀 `src/configs/pipeline.yaml` 的 `distance` 區段（設定檔分工見 `quantize.md`「設定檔」）。
 
 | 參數 | 預設 | 說明 |
 |---|---|---|
@@ -101,12 +101,12 @@ LiDAR 點雲 ──prepare_points（每幀一次）──▶ FramePoints ──�
 
 ## 5. 執行（在 `src/` 下）
 
-frame 來源：預設是 `{coda_root}/kept_frames.csv`，由 `tools/filter_coda_frames.py --apply` 產生，只留下 RGB（`2d_rect/cam0`）、LiDAR、3D bbox 三者齊全，且含目標類別的 frame。目前 CODa_tiny 有 908 個 frame，分布在 21 個 seq。LiDAR 優先讀 `3d_raw/os1`，沒有時改讀 `3d_comp/os1`；tiny split 只有 `3d_comp`，每幀 131072 點（128 線 × 1024）。
+frame 來源：預設是 `src/configs/paths.yaml` 的 `kept_frames`（`{coda_root}/kept_frames.csv`），由 `tools/filter_coda_frames.py --apply` 產生，只留下 RGB（`2d_rect/cam0`）、LiDAR、3D bbox 三者齊全，且含目標類別的 frame。目前 CODa_tiny 有 908 個 frame，分布在 21 個 seq。LiDAR 優先讀 `3d_raw/os1`，沒有時改讀 `3d_comp/os1`；tiny split 只有 `3d_comp`，每幀 131072 點（128 線 × 1024）。
 
 ```bash
 python run_pipeline.py                           # kept_frames.csv 的所有 frame，跑 YOLO
-python run_pipeline.py --dets ../outputs/vis_lidar2img_yolo/detections.csv   # 用現有的偵測結果
 python run_pipeline.py --seq 0 --num 20 --w-cov 0.3 --w-center 0.7
+python run_pipeline.py --warmup 5                # profiling.json 統計排除前 5 個 frame（預設 3）
 ```
 
 輸出在 `outputs/distance/`：
@@ -120,7 +120,8 @@ python run_pipeline.py --seq 0 --num 20 --w-cov 0.3 --w-center 0.7
   - `iou, cov_w, cov_h`：最終點的 2D 外框與 YOLO 框的 IoU，以及寬、高方向的覆蓋率。
 - `detections.csv`：YOLO 原始結果（只在跑 YOLO 時產生）。
 - `frames.csv`：這次處理的所有 frame（包含沒有偵測框的），`run_eval.py` 用它來算 FN。
-- `timing.json`：YOLO 與距離估計的耗時，以及這次執行使用的資料根目錄、相機和 `DistanceConfig`。
+- `profiling.json`：各 stage（io / yolo / prepare / cluster）的 wall time 總和、CPU time 總和、VRAM peak，統計排除前 `--warmup` 個 frame；格式見專案根目錄的 `profiling.md`。
+- `profiling.md`：同 `profiling.json` 的統計轉成 Markdown 表格，另附 weights、總耗時等執行資訊。
 
 ## 6. 檢查結果
 
@@ -161,4 +162,4 @@ python run_eval.py --iou 0.3 --outdir ../outputs/eval_iou03
 - 只用單幀，沒有做時間上的平滑或追蹤。
 - 沒有做 z-buffer 去遮擋。LiDAR 與相機之間的視差，可能讓被遮住的背景點投影進框內。
 - 重疊的偵測框會各自獨立選群，同一批點可能同時被兩個框使用。
-- 距離估計每幀平均約 220 ms（中位數 203 ms、P95 366 ms，908 幀實測），主要花在分群和 RANSAC，尚未優化。
+- 距離估計每幀平均約 220 ms（中位數 203 ms、P95 366 ms，908 幀實測），這是修正地面擬合 SVD 之前的數字。當時 `fit_ground` 的 SVD 用預設 `full_matrices=True`，每幀約 199 ms；改成 `full_matrices=False` 後降到約 12 ms（30 幀抽測），prepare 整段約 25 ms/幀。完整 908 幀的新數字尚未重測。

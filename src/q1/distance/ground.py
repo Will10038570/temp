@@ -39,7 +39,7 @@ def fit_ground(xyz, z_range=(-1.5, -0.3), max_range=30.0, iters=100, inlier_thr=
     # 用所有 inlier 做最小平方修正
     pts = cand[best]
     c = pts.mean(axis=0)
-    n = np.linalg.svd(pts - c)[2][-1]
+    n = np.linalg.svd(pts - c, full_matrices=False)[2][-1]  # 只需 Vt；預設 full_matrices=True 會多算 MxM 的 U，慢且耗記憶體
     if n[2] < 0:
         n = -n
     return n, -n @ c

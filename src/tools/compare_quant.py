@@ -1,7 +1,7 @@
 """量化結果對照報告產生器。
 
 讀取每個精度的 profiling.json + summary.json + quant_coverage_*.json，
-輸出 Markdown 表格到 configs/trt_quant.yaml 的 compare.out 路徑。
+輸出 Markdown 表格到 configs/quantization.yaml 的 compare.out 路徑。
 
 使用範例（在 src/ 下執行）：
   python tools/compare_quant.py
@@ -61,12 +61,13 @@ def _metrics(label: str, dist_dir: Path, eval_dir: Path,
 
     prof = _load_profiling(dist_dir)
     if prof and "yolo" in prof:
-        yolo = prof["yolo"]
-        mean_ms = yolo["wall_ms"]["mean"]
-        row["fps"]        = 1000.0 / mean_ms if mean_ms > 0 else None
-        row["lat_p95_ms"] = yolo["wall_ms"].get("p95")
+        wall_s = prof["yolo"]["wall_s"]
+        n      = prof["meta"]["frames_used"]
+        row["fps"]         = n / wall_s if wall_s > 0 else None
+        row["lat_mean_ms"] = wall_s * 1000 / n if n > 0 else None
+        row["vram_peak_mb"] = prof["yolo"]["vram_peak_mb"]
     else:
-        row["fps"] = row["lat_p95_ms"] = None
+        row["fps"] = row["lat_mean_ms"] = row["vram_peak_mb"] = None
 
     smry = _load_summary(eval_dir)
     if smry:
@@ -106,7 +107,8 @@ def _metrics(label: str, dist_dir: Path, eval_dir: Path,
 _COLS = [
     ("Precision",       "label",         "s"),
     ("FPS",             "fps",           ".1f"),
-    ("Lat P95 (ms)",    "lat_p95_ms",    ".1f"),
+    ("Lat mean (ms)",   "lat_mean_ms",   ".1f"),
+    ("VRAM peak (MB)",  "vram_peak_mb",  ".1f"),
     ("Precision (det)", "precision_det", ".3f"),
     ("Recall",          "recall_det",    ".3f"),
     ("MAE (m)",         "mae_m",         ".3f"),
@@ -140,11 +142,11 @@ def render_markdown(rows: list[dict]) -> str:
 def main() -> None:
     cfg = load_config()
     labels: list[str] = cfg["compare"]["labels"]
-    outdir_base = cfg["paths"]["outdir"]
+    outdir_base = cfg["paths"]["outputs"]
     cov_dir = outdir_base / "quant_coverage"
     out_path = Path(cfg["compare"]["out"])
     if not out_path.is_absolute():
-        out_path = (cfg["paths"]["outdir"].parent / cfg["compare"]["out"]).resolve()
+        out_path = (cfg["paths"]["outputs"].parent / cfg["compare"]["out"]).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows = []

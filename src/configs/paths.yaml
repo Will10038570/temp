@@ -1,3 +1,6 @@
+# 三個流程（run_pipeline / run_eval / 量化工具）共用的路徑
 # 路徑皆相對於專案根目錄 Q1/（即 src/ 的上一層）
-coda_root: data/coda/raw/CODa_tiny
-outputs: outputs
+coda_root:   data/coda/raw/CODa_tiny
+kept_frames: data/coda/raw/CODa_tiny/kept_frames.csv   # tools/filter_coda_frames.py --apply 產生的 frame 清單
+weights:     models/pretrained/yolo11s.pt              # PyTorch YOLO 權重（run_pipeline 預設、量化導出的來源）
+outputs:     outputs

@@ -130,8 +130,8 @@ def main() -> None:
     args = p.parse_args()
 
     cfg = load_config()
-    engine_dir = cfg["paths"]["outdir"] / "engines"
-    outdir = cfg["paths"]["outdir"] / "quant_coverage"
+    engine_dir = cfg["paths"]["outputs"] / "engines"
+    outdir = cfg["paths"]["outputs"] / "quant_coverage"
     outdir.mkdir(parents=True, exist_ok=True)
 
     prec = args.precision

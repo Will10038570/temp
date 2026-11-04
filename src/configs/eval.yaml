@@ -1,0 +1,6 @@
+# run_eval.py --precision 模式使用的參數
+# （不帶 --precision 時使用 argparse 預設值，不讀這個檔）
+# cam 與 DistanceConfig 必須和產生結果的 pipeline 一致，所以直接讀 pipeline.yaml，不在這裡重複
+
+iou_thr:       0.5   # GT 與 pred 框配對的 IoU 門檻
+min_gt_points: 5     # GT box 內點數少於此值時不算距離誤差

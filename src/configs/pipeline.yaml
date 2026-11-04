@@ -1,0 +1,23 @@
+# run_pipeline.py --precision 模式使用的參數
+# （不帶 --precision 時使用 argparse 預設值，不讀這個檔）
+# 共用路徑見 paths.yaml；engine 的 imgsz / device 見 quantization.yaml 的 export（engine 導出時就固定了）
+
+cam:        "cam0"
+conf:       0.25     # YOLO confidence threshold
+iou_nms:    0.70     # NMS IoU threshold
+num_frames: null     # null = 全部；填整數可限制幀數（除錯用）
+warmup:     10        # profiling.json 統計排除前幾個 frame（warmup，不影響偵測/距離輸出）
+
+# 對應 q1/pipeline.py DistanceConfig；run_eval.py --precision 也讀這一段重建 FramePoints，確保兩邊一致
+distance:
+  min_range:   0.5
+  min_depth:   0.5
+  ground_thr:  0.15
+  shrink:      0.8
+  eps_min:     0.3
+  eps_k:       2.0
+  min_points:  3
+  min_ratio:   0.3
+  w_center:    0.5
+  w_cov:       0.5
+  min_cluster: 5
